@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+myenv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# React build
+react-build/node_modules/
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Misc
+*.bak
+*.tmp

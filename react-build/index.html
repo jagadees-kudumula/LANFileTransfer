@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LAN File Server</title>
+    <script src="/static/react.js"></script>
+    <script src="/static/react-dom.js"></script>
+    <script src="/static/babel.js"></script>
+    <script src="/static/socket.io.js"></script>
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            min-height: 100vh;
+            color: #333;
+            line-height: 1.5;
+        }
+        
+        .app { 
+            max-width: 100%;
+            margin: 0 auto;
+            padding: 16px;
+        }
+        
+        /* Header */
+        .header { 
+            background: white;
+            padding: 20px 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .header h1 { 
+            font-size: 1.5rem; 
+            margin-bottom: 8px;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        
+        .status { 
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        
+        .status.connected { color: #27ae60; }
+        .status.disconnected { color: #e74c3c; }
+        
+        /* Cards */
+        .card { 
+            background: white;
+            border-radius: 12px;
+            padding: 20px 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .card h3 {
+            margin-bottom: 16px;
+            color: #2c3e50;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        /* Server Info - Mobile First */
+        .server-info { 
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .info-section {
+            flex: 1;
+        }
+        
+        .info-item { 
+            margin-bottom: 8px; 
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f3f4;
+        }
+        
+        .info-item strong { 
+            display: block;
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 4px;
+        }
+        
+        .qr-code {
+            text-align: center;
+        }
+        
+        .qr-code img {
+            max-width: 160px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+        }
+        
+        /* Clipboard Section */
+        .clipboard-section textarea {
+            width: 100%; 
+            height: 120px; 
+            padding: 12px; 
+            border: 1px solid #ddd; 
+            border-radius: 8px; 
+            resize: vertical;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 14px;
+            margin-bottom: 12px;
+            background: #fafafa;
+        }
+        
+        .clipboard-actions { 
+            display: flex; 
+            gap: 10px; 
+            flex-wrap: wrap;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+        }
+        
+        .btn-primary { 
+            background: #007bff; 
+            color: white; 
+        }
+        
+        .btn-success { 
+            background: #28a745; 
+            color: white; 
+        }
+        
+        .btn-secondary { 
+            background: #6c757d; 
+            color: white; 
+        }
+        
+        .btn-warning { 
+            background: #ffc107; 
+            color: #212529; 
+        }
+        
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        /* Breadcrumb */
+        .breadcrumb { 
+            margin-bottom: 16px; 
+            font-size: 14px;
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        
+        .breadcrumb a { 
+            color: #007bff; 
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .breadcrumb a:hover { text-decoration: underline; }
+        
+        /* Upload Section */
+        .upload-section { 
+            border: 2px dashed #dee2e6; 
+            padding: 20px; 
+            border-radius: 8px; 
+            text-align: center;
+            margin: 20px 0;
+            background: #fafafa;
+        }
+        
+        /* File Browser - Mobile First */
+        .file-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .file-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .file-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        
+        .file-name {
+            flex: 1;
+            font-weight: 600;
+            font-size: 1rem;
+        }
+        
+        .file-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+        
+        .file-actions { 
+            display: flex; 
+            gap: 8px; 
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+        
+        .drive-info {
+            font-size: 0.8rem;
+            color: #868e96;
+            margin-top: 4px;
+        }
+        
+        /* Loading */
+        .loading { 
+            text-align: center; 
+            padding: 40px; 
+            color: #6c757d; 
+            font-size: 1.1rem;
+        }
+        
+        /* Toast for copy feedback */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #28a745;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            font-weight: 500;
+        }
+
+        .auth-error {
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 12px;
+            margin: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .auth-error h2 {
+            color: #e74c3c;
+            margin-bottom: 16px;
+        }
+        
+        /* Desktop Styles */
+        @media (min-width: 768px) {
+            .app { 
+                max-width: 1200px;
+                padding: 24px;
+            }
+            
+            .header h1 { 
+                font-size: 2rem; 
+            }
+            
+            .server-info { 
+                flex-direction: row;
+            }
+            
+            .file-item {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            
+            .file-header {
+                flex: 1;
+                margin-bottom: 0;
+                align-items: center;
+            }
+            
+            .file-meta {
+                flex-direction: row;
+                gap: 16px;
+            }
+            
+            .file-actions {
+                margin-top: 0;
+                flex-wrap: nowrap;
+            }
+            
+            .card {
+                padding: 24px;
+            }
+        }
+        
+        /* Large Desktop */
+        @media (min-width: 1024px) {
+            .app { 
+                max-width: 1400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root">
+        <div class="loading">Loading LAN File Server...</div>
+    </div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+            const [currentPath, setCurrentPath] = useState('');
+            const [files, setFiles] = useState([]);
+            const [clipboard, setClipboard] = useState('');
+            const [serverInfo, setServerInfo] = useState(null);
+            const [socket, setSocket] = useState(null);
+            const [connected, setConnected] = useState(false);
+            const [loading, setLoading] = useState(true);
+            const [toast, setToast] = useState('');
+            const [history, setHistory] = useState(['']);
+            const [authError, setAuthError] = useState(false);
+
+            // Get token from URL
+            const getTokenFromURL = () => {
+                const urlParams = new URLSearchParams(window.location.search);
+                return urlParams.get('token');
+            };
+
+            useEffect(() => {
+                const token = getTokenFromURL();
+                if (!token) {
+                    setAuthError(true);
+                    setLoading(false);
+                    return;
+                }
+
+                // Initialize SocketIO with token
+                try {
+                    const newSocket = io({
+                        query: {
+                            token: token
+                        }
+                    });
+                    
+                    newSocket.on('connect', () => {
+                        setConnected(true);
+                    });
+                    
+                    newSocket.on('disconnect', () => {
+                        setConnected(false);
+                    });
+                    
+                    newSocket.on('clipboard_update', (data) => {
+                        setClipboard(data.text);
+                    });
+                    
+                    newSocket.on('connect_error', (error) => {
+                        console.error('Socket connection error:', error);
+                        setAuthError(true);
+                    });
+                    
+                    setSocket(newSocket);
+                } catch (error) {
+                    console.error('Socket error:', error);
+                    setAuthError(true);
+                }
+
+                // Load server info with token
+                loadServerInfo(token);
+
+                return () => {
+                    if (socket) socket.close();
+                };
+            }, []);
+
+            const showToast = (message) => {
+                setToast(message);
+                setTimeout(() => setToast(''), 2000);
+            };
+
+            const copyToClipboard = async () => {
+                try {
+                    await navigator.clipboard.writeText(clipboard);
+                    showToast('Copied to clipboard');
+                } catch (err) {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = clipboard;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    showToast('Copied to clipboard');
+                }
+            };
+
+            const loadServerInfo = async (token) => {
+                try {
+                    const response = await fetch(`/api/server-info?token=${token}`);
+                    if (response.status === 403) {
+                        setAuthError(true);
+                        setLoading(false);
+                        return;
+                    }
+                    
+                    const data = await response.json();
+                    if (data.error) {
+                        setAuthError(true);
+                    } else {
+                        setServerInfo(data);
+                    }
+                    setLoading(false);
+                } catch (error) {
+                    console.error('Failed to load server info:', error);
+                    setAuthError(true);
+                    setLoading(false);
+                }
+            };
+
+            const makeAuthenticatedRequest = async (url) => {
+                const token = getTokenFromURL();
+                if (!token) {
+                    setAuthError(true);
+                    throw new Error('No token found');
+                }
+                return fetch(`${url}?token=${token}`);
+            };
+
+
+            const loadFilesWithoutHistory = async (path) => {
+                if (!serverInfo) return;
+                
+                try {
+                    const encodedPath = encodeURIComponent(path);
+                    const response = await fetch(`/api/files/${encodedPath}?token=${serverInfo.token}`);
+                    const data = await response.json();
+                    if (!data.error) {
+                        setFiles(data.files);
+                        setCurrentPath(data.path);
+                    } else {
+                        console.error('Error loading files:', data.error);
+                    // If error, go back to root
+                        loadFilesWithoutHistory('');
+                    }
+                } catch (error) {
+                    console.error('Error loading files:', error);
+                    loadFilesWithoutHistory('');
+                }
+            };
+
+            const loadFiles = async (path) => {
+                if (!serverInfo) return;
+                
+                try {
+                    const encodedPath = encodeURIComponent(path);
+                    const response = await makeAuthenticatedRequest(`/api/files/${encodedPath}`);
+                    
+                    if (response.status === 403) {
+                        setAuthError(true);
+                        return;
+                    }
+                    
+                    const data = await response.json();
+                    if (!data.error) {
+                        setFiles(data.files);
+                        setCurrentPath(data.path);
+                    } else {
+                        console.error('Error loading files:', data.error);
+                    }
+                } catch (error) {
+                    console.error('Error loading files:', error);
+                    if (error.message === 'No token found') {
+                        setAuthError(true);
+                    }
+                }
+            };
+
+            const navigateToFolder = (path) => {
+                loadFiles(path);
+            };
+
+            const downloadFile = (filepath, isDir) => {
+                const token = getTokenFromURL();
+                if (!token) {
+                    setAuthError(true);
+                    return;
+                }
+                
+                const encodedPath = encodeURIComponent(filepath);
+                const url = `/api/download/${encodedPath}?token=${token}`;
+                
+                const link = document.createElement('a');
+                link.href = url;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const viewFile = (filepath) => {
+                const token = getTokenFromURL();
+                if (!token) {
+                    setAuthError(true);
+                    return;
+                }
+                
+                const encodedPath = encodeURIComponent(filepath);
+                const url = `/api/view/${encodedPath}?token=${token}`;
+                window.open(url, '_blank');
+            };
+
+
+                        const uploadFiles = async () => {
+                const token = getTokenFromURL();
+                if (!token) {
+                    setAuthError(true);
+                    return;
+                }
+                
+                const fileInput = document.getElementById('file-input');
+                const files = fileInput.files;
+                if (!files.length) {
+                    showToast('Please select files first');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('path', currentPath);
+                
+                for (let file of files) {
+                    formData.append('files', file);
+                }
+
+                try {
+                    const response = await fetch(`/api/upload?token=${token}`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.status === 403) {
+                        setAuthError(true);
+                        return;
+                    }
+                    
+                    const result = await response.json();
+                    if (result.message) {
+                        loadFiles(currentPath);
+                        showToast('Files uploaded successfully');
+                        // Clear the file input after successful upload
+                        fileInput.value = '';
+                    } else {
+                        showToast('Upload failed');
+                    }
+                } catch (error) {
+                    console.error('Upload error:', error);
+                    showToast('Upload failed');
+                }
+            };
+
+            const updateClipboard = async () => {
+                const token = getTokenFromURL();
+                if (!token) {
+                    setAuthError(true);
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/clipboard?token=${token}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: clipboard })
+                    });
+                    
+                    if (response.status === 403) {
+                        setAuthError(true);
+                        return;
+                    }
+                    
+                    showToast('Clipboard updated');
+                } catch (error) {
+                    console.error('Clipboard update error:', error);
+                    showToast('Update failed');
+                }
+            };
+
+            const formatSize = (bytes) => {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            };
+
+            const formatDate = (timestamp) => {
+                return new Date(timestamp * 1000).toLocaleDateString();
+            };
+
+            const getDriveInfo = (file) => {
+                if (file.free && file.used) {
+                    const total = formatSize(file.size);
+                    const free = formatSize(file.free);
+                    const usedPercent = ((file.used / file.size) * 100).toFixed(1);
+                    return `${total} total • ${free} free • ${usedPercent}% used`;
+                }
+                return '';
+            };
+
+            if (authError) {
+                return React.createElement('div', { className: 'auth-error' },
+                    React.createElement('h2', null, 'Access Denied'),
+                    React.createElement('p', null, 'Invalid or missing access token.'),
+                    React.createElement('p', null, 'Please scan the QR code to access this server.'),
+                    React.createElement('p', { style: { marginTop: '20px', fontSize: '0.9rem', color: '#666' } }, 
+                        'If you have the token, add ?token=YOUR_TOKEN to the URL'
+                    )
+                );
+            }
+
+            if (loading) {
+                return React.createElement('div', { className: 'loading' }, 'Loading...');
+            }
+
+            return React.createElement('div', { className: 'app' },
+                // Toast Notification
+                toast && React.createElement('div', { className: 'toast' }, toast),
+                
+                // Header
+                React.createElement('div', { className: 'header' },
+                    React.createElement('h1', null, 'LAN File Server'),
+                    React.createElement('div', { 
+                        className: `status ${connected ? 'connected' : 'disconnected'}` 
+                    }, connected ? 'Connected' : 'Disconnected')
+                ),
+
+                // Server Info
+                serverInfo && React.createElement('div', { className: 'card server-info' },
+                    React.createElement('div', { className: 'info-section' },
+                        React.createElement('h3', null, 'Server Information'),
+                        React.createElement('div', { className: 'info-item' }, 
+                            React.createElement('strong', null, 'Local URL'), 
+                            React.createElement('div', null, serverInfo.localUrl)
+                        ),
+                        React.createElement('div', { className: 'info-item' }, 
+                            React.createElement('strong', null, 'Network URL'), 
+                            React.createElement('div', null, serverInfo.networkUrl)
+                        ),
+                        React.createElement('div', { className: 'info-item' }, 
+                            React.createElement('strong', null, 'IP Address'), 
+                            React.createElement('div', null, serverInfo.ip)
+                        )
+                    ),
+                    React.createElement('div', { className: 'info-section qr-code' },
+                        React.createElement('h3', null, 'QR Code'),
+                        serverInfo.qrBase64 ? 
+                            React.createElement('img', { src: serverInfo.qrBase64, alt: 'QR Code' }) :
+                            React.createElement('div', null, 'QR Code not available')
+                    )
+                ),
+
+                // Clipboard Section
+                React.createElement('div', { className: 'card clipboard-section' },
+                    React.createElement('h3', null, 'Shared Clipboard'),
+                    React.createElement('textarea', {
+                        value: clipboard,
+                        onChange: (e) => setClipboard(e.target.value),
+                        placeholder: 'Type or paste text here...'
+                    }),
+                    React.createElement('div', { className: 'clipboard-actions' },
+                        React.createElement('button', {
+                            className: 'btn btn-primary',
+                            onClick: updateClipboard
+                        }, 'Update Clipboard'),
+                        React.createElement('button', {
+                            className: 'btn btn-warning',
+                            onClick: copyToClipboard,
+                            disabled: !clipboard
+                        }, 'Copy Text'),
+                        React.createElement('button', {
+                            className: 'btn btn-secondary',
+                            onClick: () => setClipboard('')
+                        }, 'Clear')
+                    )
+                ),
+
+                // File Browser
+                React.createElement('div', { className: 'card' },
+                    React.createElement('div', { className: 'breadcrumb' },
+                        React.createElement('a', { 
+                            href: '#',
+                            onClick: (e) => { 
+                                e.preventDefault(); 
+                                navigateToFolder(''); 
+                            }
+                        }, 'Computer'),
+                        currentPath && currentPath.split('\\').filter(Boolean).map((part, index, arr) =>
+                            React.createElement('span', { key: index },
+                                ' › ',
+                                React.createElement('a', {
+                                    href: '#',
+                                    onClick: (e) => {
+                                        e.preventDefault();
+                                        navigateToFolder(arr.slice(0, index + 1).join('\\'));
+                                    }
+                                }, part)
+                            )
+                        )
+                    ),
+
+                    React.createElement('div', { className: 'upload-section' },
+                        React.createElement('h3', null, 'Upload Files'),
+                        React.createElement('input', {
+                            type: 'file',
+                            multiple: true,
+                            id: 'file-input',
+                            style: { margin: '10px 0' }
+                        }),
+                        React.createElement('button', {
+                            className: 'btn btn-success',
+                            onClick: uploadFiles,
+                            style: { marginTop: '10px' }
+                        }, '📤 Upload Selected Files')
+                    ),
+
+                    React.createElement('h3', null, `Files (${files.length})`),
+                    React.createElement('div', { className: 'file-list' },
+                        files.map((file, index) =>
+                            React.createElement('div', { key: index, className: 'file-item' },
+                                React.createElement('div', { className: 'file-header' },
+                                    React.createElement('div', { className: 'file-name' },
+                                        file.isDir ? 'Folder' : 'File',
+                                        React.createElement('div', { style: { marginTop: '4px', fontWeight: '600' } }, file.name),
+                                        file.free && 
+                                            React.createElement('div', { className: 'drive-info' },
+                                                getDriveInfo(file)
+                                            )
+                                    ),
+                                    React.createElement('div', { className: 'file-meta' },
+                                        React.createElement('span', null, 
+                                            file.isDir ? '' : formatSize(file.size)
+                                        ),
+                                        React.createElement('span', null, formatDate(file.modified))
+                                    )
+                                ),
+                                React.createElement('div', { className: 'file-actions' },
+                                    file.isDir ? [
+                                        React.createElement('button', {
+                                            key: 'open',
+                                            className: 'btn btn-primary',
+                                            onClick: () => navigateToFolder(file.path)
+                                        }, 'Open'),
+                                        React.createElement('button', {
+                                            key: 'download',
+                                            className: 'btn btn-success',
+                                            onClick: () => downloadFile(file.path, true)
+                                        }, 'Download')
+                                    ] : [
+                                        React.createElement('button', {
+                                            key: 'view',
+                                            className: 'btn btn-primary',
+                                            onClick: () => viewFile(file.path)
+                                        }, 'View'),
+                                        React.createElement('button', {
+                                            key: 'download',
+                                            className: 'btn btn-success',
+                                            onClick: () => downloadFile(file.path, false)
+                                        }, 'Download')
+                                    ]
+                                )
+                            )
+                        )
+                    )
+                )
+            );
+        }
+
+        ReactDOM.render(React.createElement(App), document.getElementById('root'));
+    </script>
+</body>
+</html>
