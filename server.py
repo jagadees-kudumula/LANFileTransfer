@@ -12,11 +12,7 @@ import atexit
 import base64
 from io import BytesIO
 import psutil
-import logging
-from logging.handlers import RotatingFileHandler
 import platform
-from pathlib import Path
-import sys
 
 # Configuration
 PORT = 8080
@@ -37,19 +33,7 @@ TEMP_ZIP_FOLDER = os.path.join(DESKTOP_PATH, "temp_zips")
 # Optimized chunk size for speed (16MB chunks)
 CHUNK_SIZE = 16 * 1024 * 1024
 
-# Create necessary directories
 os.makedirs(TEMP_ZIP_FOLDER, exist_ok=True)
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        RotatingFileHandler('server.log', maxBytes=10485760, backupCount=5),  # 10MB per file, 5 backups
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # Flask setup
 app = Flask(__name__, static_folder='react-build', static_url_path='')
@@ -59,69 +43,18 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # 100GB max file si
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 AUTH_TOKEN = os.environ.get('AUTH_TOKEN', secrets.token_urlsafe(16))
-
-# Thread-safe data structures
-import threading
 temp_zip_files = set()
-temp_zip_files_lock = threading.Lock()
-clipboard_lock = threading.Lock()
 
 def get_ip():
-    """Get the local IP address with pure Python methods"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # Method 1: Socket connection (works on all platforms)
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('8.8.8.8', 80))
         ip = s.getsockname()[0]
+    except:
+        ip = '127.0.0.1'
+    finally:
         s.close()
-        return ip
-    except Exception as e:
-        logger.warning(f"Primary IP detection failed: {e}")
-        
-        # Method 2: Try getting IP from network interfaces (pure Python)
-        try:
-            # Get all network interfaces
-            hostname = socket.gethostname()
-            # Get all IP addresses associated with the hostname
-            ip_list = socket.getaddrinfo(hostname, None)
-            
-            # Filter for IPv4 addresses that are not localhost
-            for ip_info in ip_list:
-                ip_address = ip_info[4][0]
-                if (ip_address.startswith('192.168.') or 
-                    ip_address.startswith('10.') or 
-                    ip_address.startswith('172.') or
-                    (ip_address.startswith('169.254.') and not ip_address == '169.254.0.0')):
-                    return ip_address
-                    
-            # If no private IP found, return the first non-localhost IP
-            for ip_info in ip_list:
-                ip_address = ip_info[4][0]
-                if ip_address != '127.0.0.1' and not ip_address.startswith('::'):
-                    return ip_address
-                    
-        except Exception as e:
-            logger.warning(f"Alternative IP detection failed: {e}")
-            
-        # Final fallback
-        return '127.0.0.1'
-
-def generate_qr_code():
-    """Generate QR code with authentication token"""
-    try:
-        HOST_IP = get_ip()
-        qr_data = f"http://{HOST_IP}:{PORT}/?token={AUTH_TOKEN}"
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
-        qr.add_data(qr_data)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        img.save(QR_CODE_FILE)
-        logger.info(f"QR code generated: {QR_CODE_FILE}")
-        logger.info(f"Access token: {AUTH_TOKEN}")
-        return True
-    except Exception as e:
-        logger.error(f"QR code generation failed: {e}")
-        return False
+    return ip
 
 def generate_qr_base64():
     """Generate QR code as base64 for web display"""
@@ -138,11 +71,11 @@ def generate_qr_base64():
         img_str = base64.b64encode(buffered.getvalue()).decode()
         return f"data:image/png;base64,{img_str}"
     except Exception as e:
-        logger.error(f"QR base64 generation failed: {e}")
+        print(f"QR base64 generation failed: {e}")
         return ""
 
 def get_safe_path(path):
-    """Convert and validate file paths safely"""
+    """Convert and validate file paths safely (cross-platform)"""
     try:
         abs_path = os.path.abspath(path)
         
@@ -150,27 +83,30 @@ def get_safe_path(path):
         if '../' in path or '..\\' in path:
             return None
             
-        valid_drives = [partition.mountpoint for partition in psutil.disk_partitions()]
-        valid_drives.append(HOME_PATH)
-        
-        # Allow access if path is within any valid drive
-        for drive in valid_drives:
-            if abs_path.startswith(drive):
-                return abs_path
+        # Allow access if path is within home directory or valid drives
+        if abs_path.startswith(HOME_PATH):
+            return abs_path
+            
+        # Check other drives (mainly Windows)
+        for partition in psutil.disk_partitions():
+            try:
+                if abs_path.startswith(partition.mountpoint):
+                    return abs_path
+            except:
+                continue
                 
-        # If we get here, the path is not within any valid drive
         return None
     
     except Exception:
         return None
 
 def get_drives():
-    """Get available drives/filesystems safely"""
+    """Get available drives/filesystems (cross-platform)"""
     drives = []
     try:
         # Always start with home directory
         home_drive = {
-            'name': "Home",
+            'name': "Home Directory",
             'path': HOME_PATH,
             'isDir': True,
             'size': 0,
@@ -192,36 +128,16 @@ def get_drives():
             
         drives.append(home_drive)
         
-        # Add other drives (Windows) or mount points (Linux/Mac)
+        # Add other drives
         for partition in psutil.disk_partitions():
             try:
                 # Skip CD-ROM and special drives
                 if 'cdrom' in partition.opts or partition.fstype == '':
                     continue
                     
-                # Skip system partitions that might be sensitive
+                # Skip system partitions that might be sensitive on Windows
                 if platform.system() == "Windows":
                     if partition.mountpoint in ['C:\\', 'A:\\', 'B:\\']:
-                        # For C: drive, only show user-accessible areas
-                        user_profile = {
-                            'name': "User Profile",
-                            'path': HOME_PATH,
-                            'isDir': True,
-                            'size': 0,
-                            'free': 0,
-                            'used': 0,
-                            'modified': time.time()
-                        }
-                        try:
-                            usage = psutil.disk_usage(HOME_PATH)
-                            user_profile.update({
-                                'size': usage.total,
-                                'free': usage.free,
-                                'used': usage.used
-                            })
-                        except:
-                            pass
-                        drives.append(user_profile)
                         continue
                 
                 # For other drives, include them
@@ -237,48 +153,43 @@ def get_drives():
                         'modified': time.time()
                     })
             except Exception as e:
-                logger.warning(f"Failed to get info for {partition.mountpoint}: {e}")
+                print(f"Failed to get info for {partition.mountpoint}: {e}")
                 continue
                 
     except Exception as e:
-        logger.error(f"Error getting drives: {e}")
+        print(f"Error getting drives: {e}")
     
     return drives
 
-# Clipboard functionality with thread safety
+# Clipboard functionality
 clipboard_content = ""
 clipboard_file_modified_time = 0
 
 def load_clipboard():
-    """Load clipboard content with thread safety"""
     global clipboard_file_modified_time
-    with clipboard_lock:
-        try:
-            if os.path.exists(CLIPBOARD_FILE):
-                current_mtime = os.path.getmtime(CLIPBOARD_FILE)
-                with open(CLIPBOARD_FILE, "r", encoding="utf-8") as f:
-                    content = f.read().strip()
-                    clipboard_file_modified_time = current_mtime
-                    return content
-        except Exception as e:
-            logger.error(f"Error loading clipboard: {e}")
-        return ""
+    try:
+        if os.path.exists(CLIPBOARD_FILE):
+            current_mtime = os.path.getmtime(CLIPBOARD_FILE)
+            with open(CLIPBOARD_FILE, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                clipboard_file_modified_time = current_mtime
+                return content
+    except Exception as e:
+        print(f"Error loading clipboard: {e}")
+    return ""
 
 def save_clipboard(text):
-    """Save clipboard content with thread safety"""
     global clipboard_file_modified_time
-    with clipboard_lock:
-        try:
-            with open(CLIPBOARD_FILE, "w", encoding="utf-8") as f:
-                f.write(text)
-            clipboard_file_modified_time = os.path.getmtime(CLIPBOARD_FILE)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving clipboard: {e}")
-            return False
+    try:
+        with open(CLIPBOARD_FILE, "w", encoding="utf-8") as f:
+            f.write(text)
+        clipboard_file_modified_time = os.path.getmtime(CLIPBOARD_FILE)
+        return True
+    except Exception as e:
+        print(f"Error saving clipboard: {e}")
+        return False
 
 def monitor_clipboard_file():
-    """Monitor clipboard file for changes with thread safety"""
     global clipboard_content, clipboard_file_modified_time
     while True:
         try:
@@ -290,13 +201,12 @@ def monitor_clipboard_file():
                         clipboard_content = new_content
                         socketio.emit('clipboard_update', {'text': clipboard_content})
         except Exception as e:
-            logger.error(f"File monitor error: {e}")
+            print(f"File monitor error: {e}")
         time.sleep(1)
 
 # Initialize clipboard
 clipboard_content = load_clipboard()
-clipboard_monitor_thread = threading.Thread(target=monitor_clipboard_file, daemon=True)
-clipboard_monitor_thread.start()
+threading.Thread(target=monitor_clipboard_file, daemon=True).start()
 
 # API Routes
 @app.route('/')
@@ -340,8 +250,7 @@ def list_files(filepath=''):
                     'size': stat.st_size if not os.path.isdir(full_path) else 0,
                     'modified': stat.st_mtime
                 })
-            except (OSError, PermissionError) as e:
-                logger.warning(f"Access denied to {full_path}: {e}")
+            except (OSError, PermissionError):
                 continue
 
         return jsonify({
@@ -350,21 +259,16 @@ def list_files(filepath=''):
             'isRoot': False
         })
     except Exception as e:
-        logger.error(f"Error listing files: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': str(e)}), 500
 
 def generate_chunked_file(filepath, chunk_size=CHUNK_SIZE):
-    """Generator function for chunked file transfer with error handling"""
-    try:
-        with open(filepath, 'rb') as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                yield chunk
-    except Exception as e:
-        logger.error(f"Error reading file {filepath}: {e}")
-        raise
+    """Generator function for chunked file transfer"""
+    with open(filepath, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
 
 @app.route('/api/download/<path:filepath>')
 def download_file(filepath):
@@ -377,39 +281,31 @@ def download_file(filepath):
         filename = os.path.basename(abs_path)
         
         if os.path.isdir(abs_path):
-            # Create temporary zip file with thread-safe management
-            zip_filename = f"{filename}_{int(time.time())}_{secrets.token_hex(4)}.zip"
+            # Fast zip creation with minimal compression for speed
+            zip_filename = f"{filename}_{int(time.time())}.zip"
             zip_path = os.path.join(TEMP_ZIP_FOLDER, zip_filename)
             
-            try:
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
-                    for root, dirs, files in os.walk(abs_path):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            if get_safe_path(file_path):  # Security check
-                                arcname = os.path.relpath(file_path, abs_path)
-                                zipf.write(file_path, arcname)
-                
-                # Thread-safe addition to temp files
-                with temp_zip_files_lock:
-                    temp_zip_files.add(zip_path)
-                
-                # Chunked transfer for zip files
-                file_size = os.path.getsize(zip_path)
-                response = Response(
-                    generate_chunked_file(zip_path),
-                    mimetype='application/zip',
-                    headers={
-                        'Content-Disposition': f'attachment; filename="{filename}.zip"',
-                        'Content-Length': str(file_size)
-                    }
-                )
-                return response
-                
-            except Exception as e:
-                logger.error(f"Error creating zip: {e}")
-                return jsonify({'error': 'Failed to create zip file'}), 500
-                
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zipf:
+                for root, dirs, files in os.walk(abs_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if get_safe_path(file_path):  # Security check
+                            arcname = os.path.relpath(file_path, abs_path)
+                            zipf.write(file_path, arcname)
+            
+            temp_zip_files.add(zip_path)
+            
+            # Chunked transfer for zip files
+            file_size = os.path.getsize(zip_path)
+            response = Response(
+                generate_chunked_file(zip_path),
+                mimetype='application/zip',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{filename}.zip"',
+                    'Content-Length': str(file_size)
+                }
+            )
+            return response
         else:
             # Chunked transfer for single files
             file_size = os.path.getsize(abs_path)
@@ -424,8 +320,7 @@ def download_file(filepath):
             return response
             
     except Exception as e:
-        logger.error(f"Download error: {e}")
-        return jsonify({'error': 'Download failed'}), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/upload', methods=['POST'])
 def upload_files():
@@ -442,43 +337,30 @@ def upload_files():
 
         files = request.files.getlist('files')
         uploaded = []
-        errors = []
         
         for file in files:
             if file.filename:
                 # Sanitize filename
                 filename = os.path.basename(file.filename)
                 if not filename or filename.startswith('.'):
-                    errors.append(f"Invalid filename: {filename}")
                     continue
                     
                 save_path = os.path.join(target_dir, filename)
                 
                 # Additional security check
                 if not get_safe_path(save_path):
-                    errors.append(f"Access denied for: {filename}")
                     continue
                 
                 try:
                     file.save(save_path)
                     uploaded.append(filename)
-                    logger.info(f"Uploaded: {filename} to {target_dir}")
                 except Exception as e:
-                    errors.append(f"Failed to upload {filename}: {str(e)}")
-                    logger.error(f"Upload failed for {filename}: {e}")
+                    print(f"Upload failed for {filename}: {e}")
 
-        result = {
-            'message': f'Uploaded {len(uploaded)} files',
-            'files': uploaded
-        }
-        if errors:
-            result['errors'] = errors
-            
-        return jsonify(result)
+        return jsonify({'message': f'Uploaded {len(uploaded)} files', 'files': uploaded})
         
     except Exception as e:
-        logger.error(f"Upload error: {e}")
-        return jsonify({'error': 'Upload failed'}), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/clipboard', methods=['GET', 'POST'])
 def handle_clipboard():
@@ -486,20 +368,11 @@ def handle_clipboard():
     if request.method == 'GET':
         return jsonify({'content': clipboard_content})
     else:
-        try:
-            data = request.json
-            if not data:
-                return jsonify({'error': 'No data provided'}), 400
-                
-            new_content = data.get('content', '')
-            with clipboard_lock:
-                clipboard_content = new_content
-                save_clipboard(clipboard_content)
-                socketio.emit('clipboard_update', {'text': clipboard_content})
-            return jsonify({'message': 'Clipboard updated'})
-        except Exception as e:
-            logger.error(f"Clipboard update error: {e}")
-            return jsonify({'error': 'Clipboard update failed'}), 500
+        data = request.json
+        clipboard_content = data.get('content', '')
+        save_clipboard(clipboard_content)
+        socketio.emit('clipboard_update', {'text': clipboard_content})
+        return jsonify({'message': 'Clipboard updated'})
 
 # ---------- Strict Authentication ----------
 @app.before_request
@@ -515,7 +388,6 @@ def check_auth():
     # ALL other routes require token
     token = request.args.get('token')
     if token != AUTH_TOKEN:
-        logger.warning(f"Authentication failed for {request.path} from {request.remote_addr}")
         return jsonify({'error': 'Invalid or missing access token'}), 403
 
 # ---------- Server Info ----------
@@ -544,24 +416,18 @@ def serve_static(filename):
 # SocketIO events
 @socketio.on('connect')
 def handle_connect():
-    logger.info(f"Client connected: {request.sid}")
     emit('clipboard_update', {'text': clipboard_content})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info(f"Client disconnected: {request.sid}")
+    pass
 
 @socketio.on('clipboard_update')
 def handle_clipboard_update(data):
     global clipboard_content
-    try:
-        new_content = data.get('text', '')
-        with clipboard_lock:
-            clipboard_content = new_content
-            save_clipboard(clipboard_content)
-            emit('clipboard_update', {'text': clipboard_content}, broadcast=True)
-    except Exception as e:
-        logger.error(f"SocketIO clipboard error: {e}")
+    clipboard_content = data.get('text', '')
+    save_clipboard(clipboard_content)
+    emit('clipboard_update', {'text': clipboard_content}, broadcast=True)
 
 # Serve local SocketIO client
 @app.route('/socket.io.js')
@@ -603,83 +469,22 @@ def view_file(filepath):
             return response
             
     except Exception as e:
-        logger.error(f"View file error: {e}")
-        return jsonify({'error': 'File view failed'}), 500
+        return jsonify({'error': str(e)}), 500
 
-# Enhanced cleanup with thread safety
+# Cleanup
 def cleanup():
-    """Cleanup temporary files with thread safety"""
-    logger.info("Cleaning up temporary files...")
-    with temp_zip_files_lock:
-        for zip_file in list(temp_zip_files):
-            try:
-                if os.path.exists(zip_file):
-                    os.remove(zip_file)
-                    logger.info(f"Removed temporary file: {zip_file}")
-            except Exception as e:
-                logger.error(f"Failed to remove {zip_file}: {e}")
-        temp_zip_files.clear()
+    for zip_file in temp_zip_files:
+        try:
+            if os.path.exists(zip_file):
+                os.remove(zip_file)
+        except:
+            pass
 
-# Register cleanup handlers
 atexit.register(cleanup)
 
-# Handle graceful shutdown
-import signal
-def signal_handler(sig, frame):
-    logger.info("Received shutdown signal, cleaning up...")
-    cleanup()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-
-# Replace with production server setup:
-def run_production_server():
-    """Run with production-ready server"""
-    try:
-        # Try eventlet first (better performance)
-        try:
-            import eventlet
-            eventlet.monkey_patch()
-            logger.info("🚀 Starting production server with Eventlet...")
-            socketio.run(app, host=HOST, port=PORT, debug=False)
-            
-        except ImportError:
-            # Fallback to gevent (modern approach)
-            try:
-                from gevent import monkey
-                monkey.patch_all()
-                
-                logger.info("🚀 Starting production server with Gevent...")
-                # Use Flask-SocketIO's built-in gevent support
-                socketio.run(app, host=HOST, port=PORT, debug=False)
-                
-            except ImportError:
-                # Final fallback: warn about development mode
-                logger.warning("⚠️  Running in DEVELOPMENT MODE - Install eventlet for production")
-                logger.warning("📦 Run: pip install eventlet")
-                socketio.run(app, host=HOST, port=PORT, debug=False, allow_unsafe_werkzeug=True)
-                
-    except Exception as e:
-        logger.error(f"Server startup failed: {e}")
-        cleanup()
-        sys.exit(1)
-
 if __name__ == '__main__':
-    logger.info("🚀 Starting Production LAN File Server...")
-    logger.info(f"📁 Home directory: {HOME_PATH}")
-    logger.info(f"🔑 Authentication Token: {AUTH_TOKEN}")
+    print("🚀 Starting LAN File Server...")
+    print(f"📁 Home directory: {HOME_PATH}")
     
-    # Generate QR code
-    if generate_qr_code():
-        logger.info(f"✅ QR code saved: {QR_CODE_FILE}")
-    else:
-        logger.error("❌ Failed to generate QR code")
-    
-    server_ip = get_ip()
-    logger.info(f"🌐 Server starting on http://{server_ip}:{PORT}")
-    logger.info("📝 Logs are being written to server.log")
-    
-    # Start production server
-    run_production_server()
+    print(f"🌐 Server starting on http://{get_ip()}:{PORT}")
+    socketio.run(app, host=HOST, port=PORT, debug=False, allow_unsafe_werkzeug=True)

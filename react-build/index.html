@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LAN File Server</title>
-    <script src="/static/react.js"></script>
-    <script src="/static/react-dom.js"></script>
-    <script src="/static/babel.js"></script>
-    <script src="/static/socket.io.js"></script>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         * { 
             margin: 0; 
@@ -203,6 +203,14 @@
             flex-direction: column;
             gap: 12px;
         }
+
+        /* --- NEW CSS FOR SCROLLABLE CONTAINER --- */
+        .file-browser-container {
+            max-height: 500px; /* Adjust this height as needed */
+            overflow-y: auto;  /* Adds a scrollbar only when content overflows */
+            padding-right: 5px; /* Adds a little space so the scrollbar doesn't overlap content */
+            margin-top: 16px;
+        }
         
         .file-item {
             background: #f8f9fa;
@@ -349,7 +357,6 @@
             const [connected, setConnected] = useState(false);
             const [loading, setLoading] = useState(true);
             const [toast, setToast] = useState('');
-            const [history, setHistory] = useState(['']);
             const [authError, setAuthError] = useState(false);
 
             // Get token from URL
@@ -369,13 +376,13 @@
                 // Initialize SocketIO with token
                 try {
                     const newSocket = io({
-                        query: {
-                            token: token
-                        }
+                        query: { token: token }
                     });
                     
                     newSocket.on('connect', () => {
                         setConnected(true);
+                        // Load files for the root path once connected and server info is available
+                        if(serverInfo) loadFiles('');
                     });
                     
                     newSocket.on('disconnect', () => {
@@ -405,6 +412,13 @@
                 };
             }, []);
 
+            // Modified useEffect to load files only after serverInfo is set
+            useEffect(() => {
+                if (serverInfo) {
+                    loadFiles(currentPath);
+                }
+            }, [serverInfo]);
+
             const showToast = (message) => {
                 setToast(message);
                 setTimeout(() => setToast(''), 2000);
@@ -415,7 +429,6 @@
                     await navigator.clipboard.writeText(clipboard);
                     showToast('Copied to clipboard');
                 } catch (err) {
-                    // Fallback for older browsers
                     const textArea = document.createElement('textarea');
                     textArea.value = clipboard;
                     document.body.appendChild(textArea);
@@ -434,7 +447,6 @@
                         setLoading(false);
                         return;
                     }
-                    
                     const data = await response.json();
                     if (data.error) {
                         setAuthError(true);
@@ -449,35 +461,20 @@
                 }
             };
 
-            const makeAuthenticatedRequest = async (url) => {
+            const makeAuthenticatedRequest = async (url, options = {}) => {
                 const token = getTokenFromURL();
                 if (!token) {
                     setAuthError(true);
                     throw new Error('No token found');
                 }
-                return fetch(`${url}?token=${token}`);
-            };
+                const authenticatedUrl = url.includes('?') ? `${url}&token=${token}` : `${url}?token=${token}`;
+                const response = await fetch(authenticatedUrl, options);
 
-
-            const loadFilesWithoutHistory = async (path) => {
-                if (!serverInfo) return;
-                
-                try {
-                    const encodedPath = encodeURIComponent(path);
-                    const response = await fetch(`/api/files/${encodedPath}?token=${serverInfo.token}`);
-                    const data = await response.json();
-                    if (!data.error) {
-                        setFiles(data.files);
-                        setCurrentPath(data.path);
-                    } else {
-                        console.error('Error loading files:', data.error);
-                    // If error, go back to root
-                        loadFilesWithoutHistory('');
-                    }
-                } catch (error) {
-                    console.error('Error loading files:', error);
-                    loadFilesWithoutHistory('');
+                if (response.status === 403) {
+                    setAuthError(true);
+                    throw new Error('Authentication failed');
                 }
+                return response;
             };
 
             const loadFiles = async (path) => {
@@ -486,12 +483,6 @@
                 try {
                     const encodedPath = encodeURIComponent(path);
                     const response = await makeAuthenticatedRequest(`/api/files/${encodedPath}`);
-                    
-                    if (response.status === 403) {
-                        setAuthError(true);
-                        return;
-                    }
-                    
                     const data = await response.json();
                     if (!data.error) {
                         setFiles(data.files);
@@ -501,9 +492,6 @@
                     }
                 } catch (error) {
                     console.error('Error loading files:', error);
-                    if (error.message === 'No token found') {
-                        setAuthError(true);
-                    }
                 }
             };
 
@@ -511,7 +499,7 @@
                 loadFiles(path);
             };
 
-            const downloadFile = (filepath, isDir) => {
+            const downloadFile = (filepath) => {
                 const token = getTokenFromURL();
                 if (!token) {
                     setAuthError(true);
@@ -541,17 +529,10 @@
                 window.open(url, '_blank');
             };
 
-
-                        const uploadFiles = async () => {
-                const token = getTokenFromURL();
-                if (!token) {
-                    setAuthError(true);
-                    return;
-                }
-                
+            const uploadFiles = async () => {
                 const fileInput = document.getElementById('file-input');
-                const files = fileInput.files;
-                if (!files.length) {
+                const filesToUpload = fileInput.files;
+                if (!filesToUpload.length) {
                     showToast('Please select files first');
                     return;
                 }
@@ -559,29 +540,23 @@
                 const formData = new FormData();
                 formData.append('path', currentPath);
                 
-                for (let file of files) {
+                for (let file of filesToUpload) {
                     formData.append('files', file);
                 }
 
                 try {
-                    const response = await fetch(`/api/upload?token=${token}`, {
+                    const response = await makeAuthenticatedRequest(`/api/upload`, {
                         method: 'POST',
                         body: formData
                     });
-                    
-                    if (response.status === 403) {
-                        setAuthError(true);
-                        return;
-                    }
                     
                     const result = await response.json();
                     if (result.message) {
                         loadFiles(currentPath);
                         showToast('Files uploaded successfully');
-                        // Clear the file input after successful upload
                         fileInput.value = '';
                     } else {
-                        showToast('Upload failed');
+                        showToast(`Upload failed: ${result.error || 'Unknown error'}`);
                     }
                 } catch (error) {
                     console.error('Upload error:', error);
@@ -590,24 +565,12 @@
             };
 
             const updateClipboard = async () => {
-                const token = getTokenFromURL();
-                if (!token) {
-                    setAuthError(true);
-                    return;
-                }
-                
                 try {
-                    const response = await fetch(`/api/clipboard?token=${token}`, {
+                    await makeAuthenticatedRequest(`/api/clipboard`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ content: clipboard })
                     });
-                    
-                    if (response.status === 403) {
-                        setAuthError(true);
-                        return;
-                    }
-                    
                     showToast('Clipboard updated');
                 } catch (error) {
                     console.error('Clipboard update error:', error);
@@ -641,7 +604,7 @@
                 return React.createElement('div', { className: 'auth-error' },
                     React.createElement('h2', null, 'Access Denied'),
                     React.createElement('p', null, 'Invalid or missing access token.'),
-                    React.createElement('p', null, 'Please scan the QR code to access this server.'),
+                    React.createElement('p', null, 'Please scan the QR code from the server to access this page.'),
                     React.createElement('p', { style: { marginTop: '20px', fontSize: '0.9rem', color: '#666' } }, 
                         'If you have the token, add ?token=YOUR_TOKEN to the URL'
                     )
@@ -724,14 +687,15 @@
                                 navigateToFolder(''); 
                             }
                         }, 'Computer'),
-                        currentPath && currentPath.split('\\').filter(Boolean).map((part, index, arr) =>
+                        currentPath && currentPath.split(/\\|\//).filter(Boolean).map((part, index, arr) =>
                             React.createElement('span', { key: index },
                                 ' › ',
                                 React.createElement('a', {
                                     href: '#',
                                     onClick: (e) => {
                                         e.preventDefault();
-                                        navigateToFolder(arr.slice(0, index + 1).join('\\'));
+                                        const newPath = arr.slice(0, index + 1).join('/');
+                                        navigateToFolder(newPath);
                                     }
                                 }, part)
                             )
@@ -754,49 +718,53 @@
                     ),
 
                     React.createElement('h3', null, `Files (${files.length})`),
-                    React.createElement('div', { className: 'file-list' },
-                        files.map((file, index) =>
-                            React.createElement('div', { key: index, className: 'file-item' },
-                                React.createElement('div', { className: 'file-header' },
-                                    React.createElement('div', { className: 'file-name' },
-                                        file.isDir ? 'Folder' : 'File',
-                                        React.createElement('div', { style: { marginTop: '4px', fontWeight: '600' } }, file.name),
-                                        file.free && 
-                                            React.createElement('div', { className: 'drive-info' },
-                                                getDriveInfo(file)
-                                            )
-                                    ),
-                                    React.createElement('div', { className: 'file-meta' },
-                                        React.createElement('span', null, 
-                                            file.isDir ? '' : formatSize(file.size)
+                    
+                    // --- MODIFIED PART: WRAPPER FOR SCROLLING ---
+                    React.createElement('div', { className: 'file-browser-container' },
+                        React.createElement('div', { className: 'file-list' },
+                            files.map((file, index) =>
+                                React.createElement('div', { key: index, className: 'file-item' },
+                                    React.createElement('div', { className: 'file-header' },
+                                        React.createElement('div', { className: 'file-name' },
+                                            file.isDir ? '📁 Folder' : '📄 File',
+                                            React.createElement('div', { style: { marginTop: '4px', fontWeight: '600' } }, file.name),
+                                            file.free && 
+                                                React.createElement('div', { className: 'drive-info' },
+                                                    getDriveInfo(file)
+                                                )
                                         ),
-                                        React.createElement('span', null, formatDate(file.modified))
+                                        React.createElement('div', { className: 'file-meta' },
+                                            React.createElement('span', null, 
+                                                file.isDir ? '' : formatSize(file.size)
+                                            ),
+                                            React.createElement('span', null, formatDate(file.modified))
+                                        )
+                                    ),
+                                    React.createElement('div', { className: 'file-actions' },
+                                        file.isDir ? [
+                                            React.createElement('button', {
+                                                key: 'open',
+                                                className: 'btn btn-primary',
+                                                onClick: () => navigateToFolder(file.path)
+                                            }, 'Open'),
+                                            React.createElement('button', {
+                                                key: 'download',
+                                                className: 'btn btn-success',
+                                                onClick: () => downloadFile(file.path)
+                                            }, 'Download')
+                                        ] : [
+                                            React.createElement('button', {
+                                                key: 'view',
+                                                className: 'btn btn-primary',
+                                                onClick: () => viewFile(file.path)
+                                            }, 'View'),
+                                            React.createElement('button', {
+                                                key: 'download',
+                                                className: 'btn btn-success',
+                                                onClick: () => downloadFile(file.path)
+                                            }, 'Download')
+                                        ]
                                     )
-                                ),
-                                React.createElement('div', { className: 'file-actions' },
-                                    file.isDir ? [
-                                        React.createElement('button', {
-                                            key: 'open',
-                                            className: 'btn btn-primary',
-                                            onClick: () => navigateToFolder(file.path)
-                                        }, 'Open'),
-                                        React.createElement('button', {
-                                            key: 'download',
-                                            className: 'btn btn-success',
-                                            onClick: () => downloadFile(file.path, true)
-                                        }, 'Download')
-                                    ] : [
-                                        React.createElement('button', {
-                                            key: 'view',
-                                            className: 'btn btn-primary',
-                                            onClick: () => viewFile(file.path)
-                                        }, 'View'),
-                                        React.createElement('button', {
-                                            key: 'download',
-                                            className: 'btn btn-success',
-                                            onClick: () => downloadFile(file.path, false)
-                                        }, 'Download')
-                                    ]
                                 )
                             )
                         )
