@@ -694,7 +694,13 @@
                                     href: '#',
                                     onClick: (e) => {
                                         e.preventDefault();
-                                        const newPath = arr.slice(0, index + 1).join('/');
+                                        let newPath = arr.slice(0, index + 1).join('/');
+
+                                        // This is the key: only add the slash if the original path was a Unix absolute path.
+                                        if (currentPath.startsWith('/') && !newPath.startsWith('/')) {
+                                            newPath = '/' + newPath;
+                                        }
+                                        
                                         navigateToFolder(newPath);
                                     }
                                 }, part)
