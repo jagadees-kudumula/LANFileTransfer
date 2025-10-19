@@ -482,7 +482,7 @@
                 
                 try {
                     const encodedPath = encodeURIComponent(path);
-                    const response = await makeAuthenticatedRequest(`/api/files/${encodedPath}`);
+                    const response = await makeAuthenticatedRequest(`/api/files/?path=${encodedPath}`);
                     const data = await response.json();
                     if (!data.error) {
                         setFiles(data.files);
@@ -507,7 +507,7 @@
                 }
                 
                 const encodedPath = encodeURIComponent(filepath);
-                const url = `/api/download/${encodedPath}?token=${token}`;
+                const url = `/api/download/?path=${encodedPath}&token=${token}`;
                 
                 const link = document.createElement('a');
                 link.href = url;
@@ -525,7 +525,7 @@
                 }
                 
                 const encodedPath = encodeURIComponent(filepath);
-                const url = `/api/view/${encodedPath}?token=${token}`;
+                const url = `/api/view/?path=${encodedPath}&token=${token}`;
                 window.open(url, '_blank');
             };
 

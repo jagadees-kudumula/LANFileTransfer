@@ -214,8 +214,9 @@ def serve_react():
     return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/api/files/')
-@app.route('/api/files/<path:filepath>')
-def list_files(filepath=''):
+@app.route('/api/files/')
+def list_files():
+    filepath = request.args.get('path', '')
     try:
         # If root path, return drives
         if filepath == '':
@@ -270,8 +271,9 @@ def generate_chunked_file(filepath, chunk_size=CHUNK_SIZE):
                 break
             yield chunk
 
-@app.route('/api/download/<path:filepath>')
-def download_file(filepath):
+@app.route('/api/download/')
+def download_file():
+    filepath = request.args.get('path', '')
     try:
         # Get and validate safe path
         abs_path = get_safe_path(filepath)
@@ -434,9 +436,10 @@ def handle_clipboard_update(data):
 def serve_socketio():
     return send_file(os.path.join(app.static_folder, 'socket.io.js'))
 
-@app.route('/api/view/<path:filepath>')
-def view_file(filepath):
+@app.route('/api/view/')
+def view_file():
     try:
+        filepath = request.args.get('path', '')
         token = request.args.get('token')
         if token != AUTH_TOKEN:
             return jsonify({'error': 'Invalid or missing access token'}), 403
